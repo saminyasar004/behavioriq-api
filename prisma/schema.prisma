@@ -1,0 +1,131 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  isAnonymous Boolean @default(true)
+  createdAt DateTime @default(now())
+
+  events               Event[]
+  behavioralProfile    BehavioralProfile?
+  pricingDecisions     PricingDecision[]
+  churnPredictions     ChurnPrediction[]
+  orders               Order[]
+  searchLogs           SearchLog[]
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId String
+  eventType String   // product_view, product_click, search, cart_add, cart_remove, checkout, page_exit
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+  payload   Json     // flexible: query, time_spent, scroll_depth, price_seen, etc.
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  basePrice     Float
+  category      String?
+  brand         String?
+  stock         Int      @default(0)
+  productVector Float[] // embedding for search
+  createdAt     DateTime @default(now())
+
+  events           Event[]
+  pricingDecisions PricingDecision[]
+}
+
+model BehavioralProfile {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  intentScore      Float    @default(50)
+  churnProbability Float    @default(0)
+  userVector       Float[] // embedding for user context
+  visitCount       Int      @default(0)
+  totalTimeMs      BigInt   @default(0)
+  priceRangeLow    Float?
+  priceRangeHigh   Float?
+  topCategories    String[] @default([])
+  recommendedAction String  @default("standard") // standard, nudge_discount, win_back, premium
+  lastComputedAt   DateTime @default(now())
+}
+
+model PricingDecision {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id])
+  originalPrice Float
+  offeredPrice  Float
+  discountPct   Float
+  intentScore   Float
+  churnProb     Float
+  actionType    String   // standard, nudge_discount, win_back, premium
+  explanation   String?  // LLM generated explanation
+  converted     Boolean?
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model ChurnPrediction {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rfmRScore   Float
+  rfmFScore   Float
+  rfmMScore   Float
+  churnProb   Float
+  alertSent   Boolean  @default(false)
+  predictedAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Order {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  totalAmount Float
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model SearchLog {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  query        String
+  resultsCount Int
+  personalized Boolean  @default(false)
+  clickedRank  Int?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
