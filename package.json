@@ -1,0 +1,35 @@
+{
+	"name": "behavioriq-api",
+	"version": "1.0.0",
+	"type": "module",
+	"license": "MIT",
+	"author": {
+		"name": "Samin Yasar",
+		"email": "yasarsamin57@gmail.com"
+	},
+	"scripts": {
+		"dev": "tsx watch src/index.ts",
+		"build": "tsc",
+		"start": "node dist/index.js",
+		"db:generate": "prisma generate",
+		"db:push": "prisma db push",
+		"db:seed": "tsx src/seed.ts",
+		"db:reset": "prisma migrate reset"
+	},
+	"dependencies": {
+		"@google/generative-ai": "^0.24.1",
+		"@hono/node-server": "^1.11.0",
+		"@hono/swagger-ui": "^0.6.1",
+		"@hono/zod-openapi": "^1.4.0",
+		"@prisma/client": "^5.13.0",
+		"hono": "^4.2.0",
+		"redis": "^4.6.13",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@types/node": "^20.11.0",
+		"prisma": "^5.13.0",
+		"tsx": "^4.7.0",
+		"typescript": "^5.3.0"
+	}
+}
