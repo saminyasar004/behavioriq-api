@@ -1,8 +1,7 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import { PrismaClient } from "@prisma/client";
-import { getUserBehavioralProfile } from "../services/behavioral";
-import { generateExplanation } from "../services/external";
+import { getPersonalizedPricing } from "../services/pricing.service";
 import { ErrorResponseSchema } from "../schemas/common";
+import type { AppVariables } from "../types/bindings";
 
 const PricingResponseSchema = z
 	.object({
@@ -15,9 +14,7 @@ const PricingResponseSchema = z
 	})
 	.openapi("PricingResponse");
 
-export const pricingRoutes = new OpenAPIHono<{
-	Variables: { prisma: PrismaClient };
-}>();
+export const pricingRoutes = new OpenAPIHono<{ Variables: AppVariables }>();
 
 const getPricingRoute = createRoute({
 	method: "get",
@@ -71,75 +68,11 @@ pricingRoutes.openapi(getPricingRoute, async (c) => {
 	const { userId } = c.req.valid("query");
 
 	try {
-		const product = await prisma.product.findUnique({
-			where: { id: productId },
-		});
-
-		if (!product) {
+		const result = await getPersonalizedPricing(prisma, productId, userId);
+		if (!result.ok) {
 			return c.json({ error: "Product not found" }, 404);
 		}
-
-		// Fetch user behavioral profile
-		const profile = await getUserBehavioralProfile(userId, prisma);
-
-		let discountPct = 0;
-		let actionType = "standard";
-		const intentScore = profile?.intentScore || 50;
-		const churnProb = profile?.churnProbability || 0;
-
-		// Apply pricing rules based on intent score
-		if (churnProb > 0.65) {
-			discountPct = 25; // Aggressive win-back
-			actionType = "win_back";
-		} else if (intentScore >= 80) {
-			discountPct = 0; // High intent, keep margin
-			actionType = "premium";
-		} else if (intentScore >= 55) {
-			discountPct = 10; // Nudge
-			actionType = "nudge_discount";
-		} else if (intentScore >= 30) {
-			discountPct = 15; // Moderate
-			actionType = "moderate_discount";
-		} else {
-			discountPct = 20; // Low intent
-			actionType = "win_back";
-		}
-
-		const offeredPrice = product.basePrice * (1 - discountPct / 100);
-
-		// Call Claude API for explanation
-		const explanation = await generateExplanation({
-			decision_type: "pricing",
-			intent_score: intentScore,
-			churn_probability: churnProb,
-			original_price: product.basePrice,
-			offered_price: offeredPrice,
-			discount_pct: discountPct,
-		});
-
-		// Store pricing decision
-		await prisma.pricingDecision.create({
-			data: {
-				userId,
-				productId,
-				originalPrice: product.basePrice,
-				offeredPrice,
-				discountPct,
-				intentScore,
-				churnProb,
-				actionType,
-				explanation,
-			},
-		});
-
-		return c.json({
-			product_id: productId,
-			original_price: product.basePrice,
-			offered_price: offeredPrice,
-			discount_pct: discountPct,
-			reason: explanation,
-			action_type: actionType,
-		}, 200);
+		return c.json(result.data, 200);
 	} catch (error) {
 		console.error("Error fetching pricing:", error);
 		return c.json({ error: "Failed to fetch pricing" }, 500);

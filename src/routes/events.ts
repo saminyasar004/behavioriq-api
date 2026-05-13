@@ -1,47 +1,20 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import { PrismaClient } from "@prisma/client";
-import { computeUserBehavioralProfile } from "../services/behavioral";
+import {
+	EventBatchRequestSchema,
+	EventResponseSchema,
+} from "../schemas/events";
+import { ingestPixelEvents, listRecentEvents } from "../services/events.service";
 import { ErrorResponseSchema } from "../schemas/common";
+import type { AppVariables } from "../types/bindings";
 
-const PixelEventSchema = z.object({
-	event_type: z
-		.string()
-		.openapi({ example: "product_view", description: "Type of event" }),
-	user_id: z
-		.string()
-		.openapi({ example: "user_123", description: "Unique user identifier" }),
-	session_id: z.string().openapi({
-		example: "sess_456",
-		description: "Unique session identifier",
-	}),
-	payload: z.record(z.string(), z.any()).openapi({
-		example: { product_id: "prod_789", price_seen: 2500 },
-		description: "Flexible event payload",
-	}),
-	timestamp: z
-		.string()
-		.openapi({ example: "2024-05-13T00:00:00Z", description: "ISO8601 timestamp" }),
-});
-
-const EventBatchRequestSchema = z.object({
-	events: z.array(PixelEventSchema),
-});
-
-const EventResponseSchema = z.object({
-	success: z.boolean(),
-	eventsProcessed: z.number(),
-	message: z.string(),
-});
-
-export const eventRoutes = new OpenAPIHono<{
-	Variables: { prisma: PrismaClient };
-}>();
+export const eventRoutes = new OpenAPIHono<{ Variables: AppVariables }>();
 
 const postBatchRoute = createRoute({
 	method: "post",
 	path: "/batch",
 	summary: "Ingest batch of pixel events",
-	description: "Receives events from the pixel SDK and updates user behavioral profiles.",
+	description:
+		"Receives events from the pixel SDK and updates user behavioral profiles.",
 	request: {
 		body: {
 			content: {
@@ -82,49 +55,17 @@ const postBatchRoute = createRoute({
 eventRoutes.openapi(postBatchRoute, async (c) => {
 	try {
 		const prisma = c.get("prisma");
-		const body = await c.req.json();
+		const { events } = c.req.valid("json");
+		const { eventsProcessed } = await ingestPixelEvents(prisma, events);
 
-		if (!body.events || !Array.isArray(body.events)) {
-			return c.json({ error: "Invalid events array" }, 400);
-		}
-
-		// Validate and prepare events
-		const eventsToCreate = body.events.map((event: any) => ({
-			userId: String(event.user_id),
-			sessionId: String(event.session_id),
-			eventType: String(event.event_type),
-			productId: event.payload?.product_id || null,
-			payload: event.payload,
-			createdAt: new Date(event.timestamp),
-		}));
-
-		// Bulk insert events
-		const createdEvents = await prisma.event.createMany({
-			data: eventsToCreate,
-			skipDuplicates: false,
-		});
-
-		console.log(`✅ Ingested ${createdEvents.count} events`);
-
-		// Trigger behavioral profile recompute for each user
-		const userIds = new Set<string>(body.events.map((e: any) => String(e.user_id)));
-		for (const userId of userIds) {
-			try {
-				await computeUserBehavioralProfile(userId, prisma);
-				console.log(`✅ Updated behavioral profile for user ${userId}`);
-			} catch (error) {
-				console.error(
-					`⚠️  Failed to update profile for user ${userId}:`,
-					error,
-				);
-			}
-		}
-
-		return c.json({
-			success: true,
-			eventsProcessed: createdEvents.count,
-			message: "Batch ingested successfully",
-		}, 200);
+		return c.json(
+			{
+				success: true,
+				eventsProcessed,
+				message: "Batch ingested successfully",
+			},
+			200,
+		);
 	} catch (error) {
 		console.error("Error ingesting events:", error);
 		return c.json(
@@ -171,15 +112,12 @@ eventRoutes.openapi(getEventsRoute, async (c) => {
 	try {
 		const prisma = c.get("prisma");
 		const { limit, userId } = c.req.valid("query");
-		const limitNum = parseInt(limit || "10");
-
-		const events = await prisma.event.findMany({
-			where: userId ? { userId } : {},
-			take: limitNum,
-			orderBy: { createdAt: "desc" },
+		const limitNum = Math.min(Math.max(parseInt(limit || "10", 10) || 10, 1), 500);
+		const { events, count } = await listRecentEvents(prisma, {
+			limit: limitNum,
+			userId: userId || undefined,
 		});
-
-		return c.json({ events, count: events.length }, 200);
+		return c.json({ events, count }, 200);
 	} catch (error) {
 		console.error("Error fetching events:", error);
 		return c.json({ error: "Failed to fetch events" }, 500);
