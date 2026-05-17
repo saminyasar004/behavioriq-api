@@ -1,0 +1,7 @@
+# Never overwrite image `node_modules` from `yarn install` with the host tree.
+node_modules
+
+dist
+.git
+*.log
+.DS_Store
