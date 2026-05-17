@@ -40,6 +40,8 @@ services:
       dockerfile: Dockerfile
       args:
         - PORT=${PORT}
+    # `localhost/` avoids Podman treating this as docker.io/library/behavioriq-api.
+    image: localhost/behavioriq-api:node22
     container_name: behavioriq-api
     ports:
       - "${PORT}:${PORT}"
@@ -50,6 +52,9 @@ services:
       PORT: ${PORT}
       NODE_ENV: ${NODE_ENV}
       GEMINI_AI_API_KEY: ${GEMINI_AI_API_KEY}
+      # Until the container image is rebuilt on Node 22, Yarn would refuse
+      # `@prisma/streams-local` on Node 20 during `yarn install` in `command:`.
+      YARN_IGNORE_ENGINES: "1"
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,9 +62,13 @@ services:
         condition: service_healthy
     volumes:
       - ./src:/app/src
+      # Keep lockfile + manifest in sync with the host so `yarn install` in the command
+      # picks up deps like `@prisma/adapter-pg` without relying on an old image layer.
+      - ./package.json:/app/package.json:ro
+      - ./yarn.lock:/app/yarn.lock:ro
     extra_hosts:
       - "host.containers.internal:host-gateway"
-    command: sh -c "yarn db:generate && yarn db:push && yarn db:seed && yarn dev"
+    command: sh -c "yarn install --frozen-lockfile && yarn db:generate && yarn db:push && yarn db:seed && yarn dev"
 
 volumes:
   postgres_data:

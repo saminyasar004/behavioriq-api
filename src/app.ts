@@ -1,12 +1,13 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { swaggerUI } from "@hono/swagger-ui";
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "./prisma";
 import type { RedisClientType } from "redis";
 import { logger } from "hono/logger";
 import { eventRoutes } from "./routes/events";
 import { pricingRoutes } from "./routes/pricing";
 import { searchRoutes } from "./routes/search";
 import { dashboardRoutes } from "./routes/dashboard";
+import { productRoutes } from "./routes/products";
 import type { AppVariables } from "./types/bindings";
 import type { AppConfig } from "./config/env";
 
@@ -60,6 +61,7 @@ export function createApp(
 	app.route("/api/pricing", pricingRoutes);
 	app.route("/api/search", searchRoutes);
 	app.route("/api/dashboard", dashboardRoutes);
+	app.route("/api/products", productRoutes);
 
 	app.doc("/docs/spec", {
 		openapi: "3.0.0",

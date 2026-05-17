@@ -1,3 +1,7 @@
+import { loadDotenvOptional } from "../util/load-dotenv";
+
+loadDotenvOptional();
+
 /**
  * Runtime configuration sourced only from environment variables
  * documented in `.env.example` (no hardcoded service URLs).
