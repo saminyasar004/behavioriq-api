@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "../prisma";
 import { computeUserBehavioralProfile } from "./behavioral";
 import type { PixelEventInput } from "../schemas/events";
 
