@@ -2,12 +2,12 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -42,14 +42,15 @@ model Event {
 }
 
 model Product {
-  id            String   @id @default(cuid())
+  id            String   @id
   name          String
   description   String?
   basePrice     Float
   category      String?
   brand         String?
   stock         Int      @default(0)
-  productVector Float[] // embedding for search
+  imageUrl      String?
+  productVector Float[] // embedding for search (API-side fallback; ML uses its own catalog vectors)
   createdAt     DateTime @default(now())
 
   events           Event[]
@@ -102,8 +103,13 @@ model ChurnPrediction {
   churnProb   Float
   alertSent   Boolean  @default(false)
   predictedAt DateTime @default(now())
+  explanation String?
+  daysSincePurchase Int?
+  recommendedWinBackDiscountPct Float?
+  resolved    Boolean  @default(false)
 
   @@index([userId])
+  @@index([resolved])
 }
 
 model Order {
@@ -128,4 +134,5 @@ model SearchLog {
   createdAt    DateTime @default(now())
 
   @@index([userId])
+  @@index([createdAt])
 }

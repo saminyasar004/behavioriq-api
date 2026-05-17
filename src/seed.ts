@@ -1,6 +1,49 @@
-import { PrismaClient } from "@prisma/client";
+import { loadDotenvOptional } from "./util/load-dotenv";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createPrismaClient } from "./prisma";
 
-const prisma = new PrismaClient();
+loadDotenvOptional();
+
+const dbUrl = process.env.DATABASE_URL?.trim();
+if (!dbUrl) {
+	throw new Error("DATABASE_URL is required to run the seed script");
+}
+const prisma = createPrismaClient(dbUrl);
+
+type V2Product = {
+	id: string;
+	name: string;
+	desc: string;
+	category: string;
+	brand: string;
+	price: number;
+	rating: number;
+	popularity: number;
+	stock: boolean;
+	discount: number;
+	image?: string;
+};
+
+function pseudoVector(text: string, dim: number): number[] {
+	const v = new Array(dim).fill(0);
+	for (let i = 0; i < text.length; i++) {
+		v[i % dim] += (text.charCodeAt(i) % 97) / 200;
+	}
+	return v.map((x) => Math.tanh(x));
+}
+
+function loadCatalog(): V2Product[] {
+	const dir = dirname(fileURLToPath(import.meta.url));
+	const catalogPath = join(dir, "data", "products_v2.json");
+	const raw = readFileSync(catalogPath, "utf8");
+	return JSON.parse(raw) as V2Product[];
+}
+
+function minutesAgo(base: Date, minutes: number): Date {
+	return new Date(base.getTime() - minutes * 60 * 1000);
+}
 
 async function main() {
 	console.log("Cleaning database...");
@@ -15,87 +58,60 @@ async function main() {
 
 	console.log("Seeding database...");
 
-	// Create sample users
+	const catalog = loadCatalog().slice(0, 28);
+
 	const user1 = await prisma.user.create({
-		data: {
-			email: "hot_buyer@example.com",
-			isAnonymous: false,
-		},
+		data: { email: "hot_buyer@example.com", isAnonymous: false },
 	});
-
 	const user2 = await prisma.user.create({
-		data: {
-			email: "hesitant_browser@example.com",
-			isAnonymous: false,
-		},
+		data: { email: "hesitant_browser@example.com", isAnonymous: false },
 	});
-
 	const user3 = await prisma.user.create({
-		data: {
-			email: "churning_customer@example.com",
-			isAnonymous: false,
-		},
+		data: { email: "churning_customer@example.com", isAnonymous: false },
 	});
 
 	console.log("✅ Created users");
 
-	// Create sample products
-	const products = await Promise.all([
-		prisma.product.create({
-			data: {
-				name: "Nike Air Max Running Shoes",
-				description: "Premium running shoes with excellent cushioning",
-				basePrice: 8500,
-				category: "shoes",
-				brand: "Nike",
-				stock: 50,
-			},
-		}),
-		prisma.product.create({
-			data: {
-				name: "Adidas Ultraboost Sneakers",
-				description: "Comfortable everyday sneakers",
-				basePrice: 7200,
-				category: "shoes",
-				brand: "Adidas",
-				stock: 45,
-			},
-		}),
-		prisma.product.create({
-			data: {
-				name: "Budget Running Shoes",
-				description: "Affordable running shoes for beginners",
-				basePrice: 2500,
-				category: "shoes",
-				brand: "Generic",
-				stock: 100,
-			},
-		}),
-		prisma.product.create({
-			data: {
-				name: "Pro Tennis Racket",
-				description: "High-performance tennis equipment",
-				basePrice: 15000,
-				category: "sports",
-				brand: "Wilson",
-				stock: 20,
-			},
-		}),
-	]);
+	const products = await Promise.all(
+		catalog.map((p) =>
+			prisma.product.create({
+				data: {
+					id: p.id,
+					name: p.name,
+					description: p.desc,
+					basePrice: p.price,
+					category: p.category,
+					brand: p.brand,
+					stock: p.stock ? Math.round(30 + p.popularity * 120) : 0,
+					imageUrl: p.image,
+					productVector: pseudoVector(`${p.name} ${p.desc}`, 100),
+				},
+			}),
+		),
+	);
 
-	console.log("✅ Created products");
+	const byId = new Map(products.map((x) => [x.id, x]));
+	const pick = (id: string) => {
+		const pr = byId.get(id);
+		if (!pr) throw new Error(`Missing product ${id} in catalog slice`);
+		return pr;
+	};
 
-	// Create behavioral profiles for each user
+	console.log(`✅ Created ${products.length} products from ML catalog`);
+
+	const neutralVector = Array(100).fill(0.25);
+
 	await prisma.behavioralProfile.create({
 		data: {
 			userId: user1.id,
 			intentScore: 87,
 			churnProbability: 0.05,
+			userVector: neutralVector,
 			visitCount: 6,
-			totalTimeMs: 125000,
-			priceRangeLow: 7000,
-			priceRangeHigh: 15000,
-			topCategories: ["shoes", "sports"],
+			totalTimeMs: BigInt(125000),
+			priceRangeLow: 40,
+			priceRangeHigh: 160,
+			topCategories: ["running_shoes", "trail_shoes"],
 			recommendedAction: "premium",
 		},
 	});
@@ -105,11 +121,12 @@ async function main() {
 			userId: user2.id,
 			intentScore: 44,
 			churnProbability: 0.2,
+			userVector: neutralVector,
 			visitCount: 8,
-			totalTimeMs: 245000,
-			priceRangeLow: 2000,
-			priceRangeHigh: 5000,
-			topCategories: ["shoes"],
+			totalTimeMs: BigInt(245000),
+			priceRangeLow: 35,
+			priceRangeHigh: 95,
+			topCategories: ["running_shoes"],
 			recommendedAction: "nudge_discount",
 		},
 	});
@@ -119,117 +136,278 @@ async function main() {
 			userId: user3.id,
 			intentScore: 21,
 			churnProbability: 0.79,
+			userVector: neutralVector,
 			visitCount: 2,
-			totalTimeMs: 45000,
-			priceRangeLow: 1500,
-			priceRangeHigh: 4000,
-			topCategories: ["shoes"],
+			totalTimeMs: BigInt(45000),
+			priceRangeLow: 35,
+			priceRangeHigh: 70,
+			topCategories: ["running_shoes"],
 			recommendedAction: "win_back",
 		},
 	});
 
 	console.log("✅ Created behavioral profiles");
 
-	// Create sample orders for RFM calculation
 	await prisma.order.create({
 		data: {
 			userId: user1.id,
-			totalAmount: 8500,
+			totalAmount: 130,
 			status: "completed",
-			createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000), // 5 days ago
+			createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
 		},
 	});
-
 	await prisma.order.create({
 		data: {
 			userId: user1.id,
-			totalAmount: 7200,
+			totalAmount: 89.99,
 			status: "completed",
-			createdAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000), // 15 days ago
+			createdAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
 		},
 	});
-
 	await prisma.order.create({
 		data: {
 			userId: user2.id,
-			totalAmount: 2500,
+			totalAmount: 59.99,
 			status: "completed",
-			createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), // 60 days ago
+			createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000),
 		},
 	});
-
 	await prisma.order.create({
 		data: {
 			userId: user3.id,
-			totalAmount: 3000,
+			totalAmount: 54.99,
 			status: "completed",
-			createdAt: new Date(Date.now() - 55 * 24 * 60 * 60 * 1000), // 55 days ago (churning)
+			createdAt: new Date(Date.now() - 55 * 24 * 60 * 60 * 1000),
 		},
 	});
 
 	console.log("✅ Created orders");
 
-	// Create sample events
+	const rs001 = pick("rs-001");
+	const rs002 = pick("rs-002");
+	const rs003 = pick("rs-003");
+	const rs004 = pick("rs-004");
+	const rs005 = pick("rs-005");
+	const rs006 = pick("rs-006");
+	const rs007 = pick("rs-007");
+	const rs008 = pick("rs-008");
+
 	const now = new Date();
-	await prisma.event.createMany({
-		data: [
-			{
-				userId: user1.id,
-				sessionId: "session_001",
-				eventType: "product_view",
-				productId: products[0].id,
-				payload: {
-					time_spent_ms: 45000,
-					scroll_depth: 0.9,
-					price_seen: 8500,
-				},
-				createdAt: new Date(now.getTime() - 1000 * 60 * 5),
+	const hotBuyerEvents = [
+		...Array.from({ length: 6 }, (_, i) => ({
+			userId: user1.id,
+			sessionId: "session_hot_buyer",
+			eventType: "product_view",
+			productId: rs001.id,
+			payload: {
+				time_spent_ms: 12000 + i * 2000,
+				scroll_depth: 0.75 + i * 0.02,
+				price_seen: rs001.basePrice,
 			},
-			{
-				userId: user1.id,
-				sessionId: "session_001",
-				eventType: "product_click",
-				productId: products[0].id,
-				payload: {},
-				createdAt: new Date(now.getTime() - 1000 * 60 * 4),
-			},
-			{
+			createdAt: minutesAgo(now, 18 - i * 2),
+		})),
+		...Array.from({ length: 2 }, (_, i) => ({
+			userId: user1.id,
+			sessionId: "session_hot_buyer",
+			eventType: "cart_add",
+			productId: rs001.id,
+			payload: { quantity: 1, price_seen: rs001.basePrice },
+			createdAt: minutesAgo(now, 5 - i),
+		})),
+		{
+			userId: user1.id,
+			sessionId: "session_hot_buyer",
+			eventType: "product_click",
+			productId: rs001.id,
+			payload: {},
+			createdAt: minutesAgo(now, 4),
+		},
+	];
+
+	const hesitantProducts = [rs002, rs003, rs004, rs005, rs006, rs007, rs008, rs002];
+	const hesitantEvents = [
+		...["running shoes", "lightweight trainers", "marathon gear"].map(
+			(query, i) => ({
 				userId: user2.id,
-				sessionId: "session_002",
+				sessionId: "session_hesitant",
 				eventType: "search",
 				productId: null,
-				payload: { query: "running shoes" },
-				createdAt: new Date(now.getTime() - 1000 * 60 * 3),
+				payload: { query },
+				createdAt: minutesAgo(now, 40 - i * 5),
+			}),
+		),
+		...hesitantProducts.map((p, i) => ({
+			userId: user2.id,
+			sessionId: "session_hesitant",
+			eventType: "product_view",
+			productId: p.id,
+			payload: {
+				time_spent_ms: 8000 + i * 500,
+				scroll_depth: 0.35 + i * 0.04,
+				price_seen: p.basePrice,
 			},
+			createdAt: minutesAgo(now, 30 - i * 2),
+		})),
+	];
+
+	const churnEvents = [
+		{
+			userId: user3.id,
+			sessionId: "session_churn",
+			eventType: "product_view",
+			productId: rs003.id,
+			payload: {
+				time_spent_ms: 8000,
+				scroll_depth: 0.3,
+				price_seen: rs003.basePrice,
+			},
+			createdAt: minutesAgo(now, 120),
+		},
+		{
+			userId: user3.id,
+			sessionId: "session_churn",
+			eventType: "search",
+			productId: null,
+			payload: { query: "discount running shoes" },
+			createdAt: minutesAgo(now, 90),
+		},
+		{
+			userId: user3.id,
+			sessionId: "session_churn",
+			eventType: "page_exit",
+			productId: rs003.id,
+			payload: { time_spent_ms: 8000 },
+			createdAt: minutesAgo(now, 85),
+		},
+	];
+
+	await prisma.event.createMany({
+		data: [...hotBuyerEvents, ...hesitantEvents, ...churnEvents],
+	});
+
+	await prisma.searchLog.createMany({
+		data: [
 			{
 				userId: user2.id,
-				sessionId: "session_002",
-				eventType: "product_view",
-				productId: products[0].id,
-				payload: {
-					time_spent_ms: 15000,
-					scroll_depth: 0.5,
-					price_seen: 8500,
-				},
-				createdAt: new Date(now.getTime() - 1000 * 60 * 2),
+				query: "running shoes",
+				resultsCount: 12,
+				personalized: true,
+				clickedRank: 2,
+			},
+			{
+				userId: user1.id,
+				query: "nike",
+				resultsCount: 6,
+				personalized: false,
+				clickedRank: 1,
 			},
 			{
 				userId: user3.id,
-				sessionId: "session_003",
-				eventType: "product_view",
-				productId: products[2].id,
-				payload: {
-					time_spent_ms: 8000,
-					scroll_depth: 0.3,
-					price_seen: 2500,
-				},
-				createdAt: now,
+				query: "running shoes",
+				resultsCount: 10,
+				personalized: true,
+				clickedRank: 3,
 			},
 		],
 	});
 
-	console.log("✅ Created events");
+	await prisma.churnPrediction.create({
+		data: {
+			userId: user3.id,
+			rfmRScore: 0.2,
+			rfmFScore: 0.35,
+			rfmMScore: 0.4,
+			churnProb: 0.79,
+			alertSent: false,
+			explanation:
+				"This returning customer has not purchased in 55 days and shows weak recent engagement. A win-back discount helps re-activate them before they churn to a competitor.",
+			daysSincePurchase: 55,
+			recommendedWinBackDiscountPct: 24,
+			resolved: false,
+		},
+	});
+
+	// Sample pricing decisions aligned with demo personas
+	await prisma.pricingDecision.createMany({
+		data: [
+			{
+				userId: user1.id,
+				productId: rs001.id,
+				originalPrice: rs001.basePrice,
+				offeredPrice: rs001.basePrice,
+				discountPct: 0,
+				intentScore: 87,
+				churnProb: 0.05,
+				actionType: "premium",
+				explanation:
+					"Strong purchase intent detected — holding standard price to protect margin on a hot buyer.",
+			},
+			{
+				userId: user2.id,
+				productId: rs002.id,
+				originalPrice: rs002.basePrice,
+				offeredPrice: Math.round(rs002.basePrice * 0.88 * 100) / 100,
+				discountPct: 12,
+				intentScore: 44,
+				churnProb: 0.2,
+				actionType: "nudge_discount",
+				explanation:
+					"Strong interest but no commitment — a 12% nudge discount encourages conversion without over-discounting.",
+			},
+			{
+				userId: user3.id,
+				productId: rs003.id,
+				originalPrice: rs003.basePrice,
+				offeredPrice: Math.round(rs003.basePrice * 0.76 * 100) / 100,
+				discountPct: 24,
+				intentScore: 21,
+				churnProb: 0.79,
+				actionType: "win_back",
+				explanation:
+					"At-risk customer with 79% churn probability — aggressive 24% win-back offer to recover the relationship.",
+			},
+		],
+	});
+
+	console.log("✅ Created persona events, search logs, churn alert, pricing samples");
 	console.log("🎉 Database seeded successfully!");
+	console.log("\n--- Demo personas (map to storefront env) ---");
+	console.log(
+		JSON.stringify(
+			{
+				"hot-buyer": {
+					userId: user1.id,
+					intentScore: 87,
+					churnProbability: 0.05,
+					demoProductId: rs001.id,
+				},
+				"hesitant-browser": {
+					userId: user2.id,
+					intentScore: 44,
+					churnProbability: 0.2,
+					demoProductId: rs002.id,
+				},
+				"churning-customer": {
+					userId: user3.id,
+					intentScore: 21,
+					churnProbability: 0.79,
+					demoProductId: rs003.id,
+				},
+			},
+			null,
+			2,
+		),
+	);
+	console.log("\n--- Optional frontend env ---");
+	console.log(
+		"NEXT_PUBLIC_BEHAVIORIQ_API_URL=http://127.0.0.1:5000\n" +
+			"NEXT_PUBLIC_BEHAVIORIQ_USERS_JSON=" +
+			JSON.stringify({
+				"hot-buyer": user1.id,
+				"hesitant-browser": user2.id,
+				"churning-customer": user3.id,
+			}),
+	);
 }
 
 main()
