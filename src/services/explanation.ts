@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { cacheGet, cacheSet, CACHE_KEYS } from "./redis";
 
 export type ExplanationDecision =
 	| {
@@ -23,36 +24,72 @@ export type ExplanationDecision =
 
 let genAI: GoogleGenerativeAI | null = null;
 
-export function initExplanationClient(apiKey: string | undefined): void {
-	genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
+const SYSTEM_PROMPT = `You are a commerce intelligence assistant for an SME platform.
+Receive structured data about a pricing, churn, or search decision and generate
+a clear business explanation (2-3 sentences). Be specific with numbers.
+Write for non-technical SME owners. Output plain text only.`;
+
+export function initExplanationClient(options: { geminiApiKey?: string }): void {
+	genAI = options.geminiApiKey
+		? new GoogleGenerativeAI(options.geminiApiKey)
+		: null;
+}
+
+function intentBand(score: number): string {
+	if (score >= 80) return "hot";
+	if (score >= 55) return "warm";
+	if (score >= 30) return "cool";
+	return "cold";
+}
+
+function cacheKeyFor(decision: ExplanationDecision): string {
+	switch (decision.decision_type) {
+		case "pricing": {
+			const d = Math.round((decision.discount_pct ?? 0) / 5) * 5;
+			return `${decision.decision_type}:${intentBand(decision.intent_score)}:d${d}`;
+		}
+		case "churn": {
+			const c = Math.round((decision.churn_probability ?? 0) * 20) / 20;
+			return `${decision.decision_type}:${intentBand(decision.intent_score)}:c${c}`;
+		}
+		case "search":
+			return `${decision.decision_type}:${intentBand(decision.intent_score)}:q${(decision.query ?? "").slice(0, 24)}`;
+		default:
+			return "unknown";
+	}
+}
+
+async function callGemini(prompt: string): Promise<string | null> {
+	if (!genAI) return null;
+	try {
+		const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+		const result = await model.generateContent(
+			`${SYSTEM_PROMPT}\n\nDecision Data: ${prompt}`,
+		);
+		const response = await result.response;
+		return response.text()?.trim() || null;
+	} catch (error) {
+		console.error("Error generating explanation with Gemini:", error);
+		return null;
+	}
 }
 
 export async function generateExplanation(
 	decision: ExplanationDecision,
 ): Promise<string> {
-	if (!genAI) {
-		return getGenericExplanation(decision);
-	}
+	const band = cacheKeyFor(decision);
+	const cacheKey = CACHE_KEYS.explanation(decision.decision_type, band);
+	const cached = await cacheGet<string>(cacheKey);
+	if (cached) return cached;
 
-	try {
-		const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-		const prompt = buildExplanationPrompt(decision);
+	const prompt = buildExplanationPrompt(decision);
 
-		const systemInstruction = `You are a commerce intelligence assistant for an SME platform.
-Generate a clear, concise business explanation (2-3 sentences) for a pricing or search decision.
-Be specific with numbers. Write for non-technical SME owners. Output plain text only.`;
+	let text = (await callGemini(prompt)) ?? getGenericExplanation(decision);
 
-		const result = await model.generateContent(
-			`${systemInstruction}\n\nDecision Data: ${prompt}`,
-		);
-		const response = await result.response;
-		const text = response.text();
+	if (!text.trim()) text = getGenericExplanation(decision);
 
-		return text || getGenericExplanation(decision);
-	} catch (error) {
-		console.error("Error generating explanation with Gemini:", error);
-		return getGenericExplanation(decision);
-	}
+	await cacheSet(cacheKey, text, 3600);
+	return text;
 }
 
 function buildExplanationPrompt(decision: ExplanationDecision): string {
