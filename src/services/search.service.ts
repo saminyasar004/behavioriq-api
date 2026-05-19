@@ -1,11 +1,7 @@
 import type { PrismaClient } from "../prisma";
 import type { Product } from "../prisma";
 import { getRecentMlProductIds, getUserBehavioralProfile } from "./behavioral";
-import {
-	callMLSearch,
-	callMLSearchRerank,
-	type SearchRerankCandidate,
-} from "./ml-client";
+import { callMLSearch } from "./ml-client";
 import { generateExplanation } from "./explanation";
 
 export type SearchServiceResult = {
@@ -14,21 +10,6 @@ export type SearchServiceResult = {
 	personalized: boolean;
 	explanation: string;
 };
-
-function clamp01(n: number): number {
-	return Math.max(0, Math.min(1, n));
-}
-
-function keywordRelevance(name: string, desc: string | null, q: string): number {
-	const n = `${name} ${desc ?? ""}`.toLowerCase().trim();
-	const query = q.toLowerCase().trim();
-	if (!query) return 0.5;
-	if (n.includes(query)) return 1;
-	const words = query.split(/\s+/).filter(Boolean);
-	if (!words.length) return 0.5;
-	const hits = words.filter((w) => n.includes(w)).length;
-	return clamp01(0.35 + 0.18 * hits);
-}
 
 async function keywordSearch(
 	prisma: PrismaClient,
@@ -46,36 +27,6 @@ async function keywordSearch(
 	});
 }
 
-function buildCandidates(
-	products: Product[],
-	query: string,
-): SearchRerankCandidate[] {
-	return products.map((p) => ({
-		product_id: p.id,
-		keyword_score: keywordRelevance(p.name, p.description, query),
-		popularity_score: clamp01(p.stock / 200),
-		semantic_score: clamp01(p.stock / 200),
-		price: p.basePrice,
-		category: p.category ?? undefined,
-	}));
-}
-
-function mergeRerankedProducts(
-	products: Product[],
-	ranked: { product_id: string }[],
-): Product[] {
-	const map = new Map(products.map((p) => [p.id, p]));
-	const ordered: Product[] = [];
-	for (const r of ranked) {
-		const p = map.get(r.product_id);
-		if (p) ordered.push(p);
-	}
-	for (const p of products) {
-		if (!ordered.includes(p)) ordered.push(p);
-	}
-	return ordered;
-}
-
 export async function searchProducts(
 	prisma: PrismaClient,
 	query: string,
@@ -83,9 +34,6 @@ export async function searchProducts(
 ): Promise<SearchServiceResult> {
 	const profile = await getUserBehavioralProfile(userId, prisma);
 	const churnScore = profile?.churnProbability ?? 0;
-	const userVector = profile?.userVector?.length ? profile.userVector : null;
-
-	const candidatesPool = await keywordSearch(prisma, query, 40);
 
 	const userExists = await prisma.user.findUnique({
 		where: { id: userId },
@@ -104,47 +52,11 @@ export async function searchProducts(
 		});
 	};
 
-	if (candidatesPool.length === 0) {
-		const explanation = await generateExplanation({
-			decision_type: "search",
-			query,
-			intent_score: profile?.intentScore ?? 50,
-		});
-		await logSearch(false, 0);
-		return {
-			results: [],
-			count: 0,
-			personalized: false,
-			explanation,
-		};
-	}
-
 	const explanation = await generateExplanation({
 		decision_type: "search",
 		query,
 		intent_score: profile?.intentScore ?? 50,
 	});
-
-	if (userVector && userVector.length > 0) {
-		try {
-			const candidates = buildCandidates(candidatesPool, query);
-			const ranked = await callMLSearchRerank({
-				user_vector: userVector,
-				candidates,
-				weights: { vector: 0.5, intent: 0.3, pricing: 0.2 },
-			});
-			const ordered = mergeRerankedProducts(candidatesPool, ranked);
-			await logSearch(true, ordered.length);
-			return {
-				results: ordered,
-				count: ordered.length,
-				personalized: true,
-				explanation,
-			};
-		} catch (e) {
-			console.warn("search-rerank failed, trying full ML search:", e);
-		}
-	}
 
 	try {
 		const recentIds = await getRecentMlProductIds(userId, prisma, 12);
@@ -161,7 +73,7 @@ export async function searchProducts(
 			explanation,
 		};
 	} catch (error) {
-		console.error("ML search failed, using keyword fallback:", error);
+		console.error("ML search failed, falling back to database keyword search:", error);
 		const products = await keywordSearch(prisma, query, 20);
 		await logSearch(false, products.length);
 		return {
