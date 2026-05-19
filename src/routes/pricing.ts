@@ -18,7 +18,7 @@ export const pricingRoutes = new OpenAPIHono<{ Variables: AppVariables }>();
 
 const getPricingRoute = createRoute({
 	method: "get",
-	path: "/:productId",
+	path: "/{productId}",
 	summary: "Get personalized pricing for a product",
 	description:
 		"Calculates a dynamic price for a user based on their intent score and churn probability.",

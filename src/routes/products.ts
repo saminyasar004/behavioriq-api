@@ -147,7 +147,7 @@ productRoutes.openapi(createRouteDef, async (c) => {
 
 const getRoute = createRoute({
 	method: "get",
-	path: "/:id",
+	path: "/{id}",
 	summary: "Get product by id",
 	request: {
 		params: z.object({ id: z.string() }),
@@ -174,7 +174,7 @@ productRoutes.openapi(getRoute, async (c) => {
 
 const updateRouteDef = createRoute({
 	method: "put",
-	path: "/:id",
+	path: "/{id}",
 	summary: "Update a product (re-embeds vector when text fields change)",
 	request: {
 		params: z.object({ id: z.string() }),
@@ -224,7 +224,7 @@ productRoutes.openapi(updateRouteDef, async (c) => {
 
 const deleteRouteDef = createRoute({
 	method: "delete",
-	path: "/:id",
+	path: "/{id}",
 	summary: "Delete a product (only if unused by events/pricing log)",
 	request: {
 		params: z.object({ id: z.string() }),

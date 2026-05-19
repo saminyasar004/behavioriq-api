@@ -100,7 +100,7 @@ dashboardRoutes.openapi(getChurnAlertsRoute, async (c) => {
 
 const patchResolveChurnRoute = createRoute({
 	method: "patch",
-	path: "/churn-alerts/:id/resolve",
+	path: "/churn-alerts/{id}/resolve",
 	summary: "Mark a churn prediction as resolved",
 	request: {
 		params: z.object({
@@ -280,7 +280,7 @@ dashboardRoutes.openapi(getLiveFeedRoute, async (c) => {
 
 const getUserSnapshotRoute = createRoute({
 	method: "get",
-	path: "/users/:userId/behavior",
+	path: "/users/{userId}/behavior",
 	summary: "Behavioral snapshot for a user (persona wiring)",
 	request: {
 		params: z.object({
