@@ -29,7 +29,10 @@ export async function cacheSet<T>(
 	ttlSeconds: number = 1800,
 ): Promise<void> {
 	const client = getRedisClient();
-	await client.setEx(key, ttlSeconds, JSON.stringify(value));
+	const serialized = JSON.stringify(value, (_, v) =>
+		typeof v === "bigint" ? Number(v) : v,
+	);
+	await client.setEx(key, ttlSeconds, serialized);
 }
 
 export async function cacheGet<T>(key: string): Promise<T | null> {
